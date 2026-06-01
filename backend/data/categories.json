@@ -1,0 +1,101 @@
+[
+  {
+    "id": 1,
+    "name": "Wedding",
+    "slug": "wedding",
+    "description": "Wedding photography and cinematic films",
+    "cover_image": null,
+    "display_order": 1,
+    "is_active": true,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": 2,
+    "name": "Baby Shower",
+    "slug": "baby-shower",
+    "description": "Baby shower celebrations",
+    "cover_image": null,
+    "display_order": 2,
+    "is_active": true,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": 3,
+    "name": "Puberty",
+    "slug": "puberty",
+    "description": "Puberty ceremony coverage",
+    "cover_image": null,
+    "display_order": 3,
+    "is_active": true,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": 4,
+    "name": "Birthday",
+    "slug": "birthday",
+    "description": "Birthday events and parties",
+    "cover_image": null,
+    "display_order": 4,
+    "is_active": true,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": 5,
+    "name": "Ear Piercing",
+    "slug": "ear-piercing",
+    "description": "Ear piercing ceremonies",
+    "cover_image": null,
+    "display_order": 5,
+    "is_active": true,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": 6,
+    "name": "Couple Shoots",
+    "slug": "couple-shoots",
+    "description": "Couple and pre-wedding shoots",
+    "cover_image": null,
+    "display_order": 6,
+    "is_active": true,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": 7,
+    "name": "Maternity",
+    "slug": "maternity",
+    "description": "Maternity photography sessions",
+    "cover_image": null,
+    "display_order": 7,
+    "is_active": true,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": 8,
+    "name": "Outdoor",
+    "slug": "outdoor",
+    "description": "Outdoor and location shoots",
+    "cover_image": null,
+    "display_order": 8,
+    "is_active": true,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": 9,
+    "name": "Temple Functions",
+    "slug": "temple-functions",
+    "description": "Temple and religious functions",
+    "cover_image": null,
+    "display_order": 9,
+    "is_active": true,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  }
+]

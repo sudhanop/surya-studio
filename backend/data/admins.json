@@ -1,0 +1,11 @@
+[
+  {
+    "id": 1,
+    "username": "surya@admin.com",
+    "password_hash": "$2a$10$Gx8PxTOf/FTn/CLTYblNAO4Ag6devn3abkjvhh6fkdOYRohQx7MsO",
+    "email": "surya@admin.com",
+    "display_name": "Admin",
+    "is_active": true,
+    "last_login_at": "2026-06-01T11:50:56.2675886Z"
+  }
+]

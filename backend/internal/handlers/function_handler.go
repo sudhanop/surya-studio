@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -178,9 +177,6 @@ func (h *FunctionHandler) List(c *fiber.Ctx) error {
 	status := c.Query("status")
 	list, err := h.repo.List(c.Context(), status, 200)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return c.JSON(jsonutil.Slice([]models.Function{}))
-		}
 		return c.Status(500).JSON(fiber.Map{"error": "failed"})
 	}
 	return c.JSON(jsonutil.Slice(list))

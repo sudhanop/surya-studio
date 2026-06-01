@@ -1,0 +1,9 @@
+/.git
+/.idea
+/.vscode
+/data
+/uploads
+/.env
+/.env.*
+/*.log
+**/*.tmp

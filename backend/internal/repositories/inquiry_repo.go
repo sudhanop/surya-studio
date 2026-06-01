@@ -2,106 +2,177 @@ package repositories
 
 import (
 	"context"
-	"database/sql"
+	"os"
+	"path/filepath"
+	"sort"
+	"sync"
 	"time"
 
 	"github.com/suryaphotography/backend/internal/models"
 )
 
-type InquiryRepo struct{ db *sql.DB }
+type InquiryRepo struct {
+	file string
+	mu   sync.Mutex
+}
 
-func NewInquiryRepo(db *sql.DB) *InquiryRepo { return &InquiryRepo{db: db} }
+func NewInquiryRepo(dataDir string) *InquiryRepo {
+	return &InquiryRepo{file: filepath.Join(dataDir, "inquiries.json")}
+}
 
-func scanInquiry(row interface{ Scan(...any) error }) (*models.Inquiry, error) {
-	var i models.Inquiry
-	var wanted sql.NullTime
-	var addr, msg sql.NullString
-	var contacted sql.NullTime
-	err := row.Scan(&i.ID, &i.CustomerName, &i.PhoneNumber, &i.OccasionType, &wanted, &addr, &msg, &i.Status, &contacted, &i.CreatedAt, &i.UpdatedAt)
+func (r *InquiryRepo) load() ([]models.Inquiry, error) {
+	var list []models.Inquiry
+	err := readJSONFile(r.file, &list)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []models.Inquiry{}, nil
+		}
 		return nil, err
 	}
-	if wanted.Valid {
-		i.WantedDate = &wanted.Time
+	if list == nil {
+		list = []models.Inquiry{}
 	}
-	if addr.Valid {
-		i.Address = &addr.String
-	}
-	if msg.Valid {
-		i.Message = &msg.String
-	}
-	if contacted.Valid {
-		i.ContactedAt = &contacted.Time
-	}
-	return &i, nil
+	return list, nil
+}
+
+func (r *InquiryRepo) save(list []models.Inquiry) error {
+	return writeJSONFile(r.file, list)
 }
 
 func (r *InquiryRepo) Create(ctx context.Context, i *models.Inquiry) (int64, error) {
-	var id int64
-	var wanted interface{}
-	if i.WantedDate != nil {
-		wanted = i.WantedDate.Format("2006-01-02")
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return 0, err
 	}
-	err := r.db.QueryRowContext(ctx, `
-		INSERT INTO dbo.inquiries (customer_name, phone_number, occasion_type, wanted_date, address, message)
-		OUTPUT INSERTED.id
-		VALUES (@p1,@p2,@p3,@p4,@p5,@p6)`,
-		i.CustomerName, i.PhoneNumber, i.OccasionType, wanted, i.Address, i.Message,
-	).Scan(&id)
-	return id, err
+	var maxID int64
+	for _, it := range list {
+		if it.ID > maxID {
+			maxID = it.ID
+		}
+	}
+	now := time.Now().UTC()
+	n := *i
+	n.ID = maxID + 1
+	if n.Status == "" {
+		n.Status = "new"
+	}
+	n.CreatedAt = now
+	n.UpdatedAt = now
+	list = append(list, n)
+	if err := r.save(list); err != nil {
+		return 0, err
+	}
+	return n.ID, nil
 }
 
 func (r *InquiryRepo) List(ctx context.Context, status string, limit int) ([]models.Inquiry, error) {
-	base := `SELECT id, customer_name, phone_number, occasion_type, wanted_date, address, message, status, contacted_at, created_at, updated_at FROM dbo.inquiries`
-	var rows *sql.Rows
-	var err error
-	if status != "" {
-		rows, err = r.db.QueryContext(ctx, base+` WHERE status = @p1 ORDER BY created_at DESC OFFSET 0 ROWS FETCH NEXT @p2 ROWS ONLY`, status, limit)
-	} else {
-		rows, err = r.db.QueryContext(ctx, base+` ORDER BY created_at DESC OFFSET 0 ROWS FETCH NEXT @p1 ROWS ONLY`, limit)
-	}
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var list []models.Inquiry
-	for rows.Next() {
-		i, err := scanInquiry(rows)
-		if err != nil {
-			return nil, err
+	out := make([]models.Inquiry, 0, len(list))
+	for _, it := range list {
+		if status == "" || it.Status == status {
+			out = append(out, it)
 		}
-		list = append(list, *i)
 	}
-	return list, rows.Err()
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (r *InquiryRepo) GetByID(ctx context.Context, id int64) (*models.Inquiry, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT id, customer_name, phone_number, occasion_type, wanted_date, address, message, status, contacted_at, created_at, updated_at
-		FROM dbo.inquiries WHERE id = @p1`, id)
-	return scanInquiry(row)
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return nil, err
+	}
+	for _, it := range list {
+		if it.ID == id {
+			cp := it
+			return &cp, nil
+		}
+	}
+	return nil, ErrNotFound
 }
 
 func (r *InquiryRepo) UpdateStatus(ctx context.Context, id int64, status string) error {
-	var contacted interface{}
-	if status == "contacted" {
-		contacted = time.Now().UTC()
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return err
 	}
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE dbo.inquiries SET status=@p1, contacted_at=COALESCE(@p2, contacted_at), updated_at=SYSUTCDATETIME() WHERE id=@p3`,
-		status, contacted, id)
-	return err
+	now := time.Now().UTC()
+	for i := range list {
+		if list[i].ID == id {
+			list[i].Status = status
+			if status == "contacted" && list[i].ContactedAt == nil {
+				list[i].ContactedAt = &now
+			}
+			list[i].UpdatedAt = now
+			return r.save(list)
+		}
+	}
+	return ErrNotFound
 }
 
 func (r *InquiryRepo) Delete(ctx context.Context, id int64) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM dbo.inquiries WHERE id = @p1`, id)
-	return err
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return err
+	}
+	out := list[:0]
+	found := false
+	for _, it := range list {
+		if it.ID == id {
+			found = true
+			continue
+		}
+		out = append(out, it)
+	}
+	if !found {
+		return ErrNotFound
+	}
+	return r.save(out)
 }
 
 func (r *InquiryRepo) CountRecent(ctx context.Context, days int) (int, error) {
-	var n int
-	err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM dbo.inquiries WHERE created_at >= DATEADD(day, -@p1, SYSUTCDATETIME()) AND status = 'new'`, days).Scan(&n)
-	return n, err
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return 0, err
+	}
+	since := time.Now().UTC().AddDate(0, 0, -days)
+	n := 0
+	for _, it := range list {
+		if it.Status == "new" && (it.CreatedAt.After(since) || it.CreatedAt.Equal(since)) {
+			n++
+		}
+	}
+	return n, nil
 }
