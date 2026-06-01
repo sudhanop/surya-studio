@@ -33,6 +33,8 @@ npm install
 npm run dev
 ```
 
+If PowerShell blocks `npm`/`next` scripts, run `start-frontend.bat` (recommended) or use `npm.cmd run dev`.
+
 - Site: http://localhost:3000  
 - Admin: http://localhost:3000/admin/login  
 
@@ -76,7 +78,7 @@ docker-compose.yml Optional production stack
 
 ```bat
 cd backend && go build ./cmd/server
-cd frontend && npm run build
+cd frontend && npm.cmd run build
 ```
 
 Both must succeed before deploy.

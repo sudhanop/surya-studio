@@ -1,0 +1,340 @@
+# Surya Photography Website — User Manual
+
+## 1) What this website is
+This website has two parts:
+- Public website (for customers): Home, Portfolio, About, Contact
+- Admin panel (for studio staff): Manage portfolio uploads, inquiries, bookings (functions), and studio details
+
+Open links (default local):
+- Website: http://localhost:3000
+- Admin Login: http://localhost:3000/admin/login
+
+## 2) Public Website (Customer Side)
+
+### 2.1 Home page ("/")
+What you can do:
+- View the main hero slideshow (featured photos/videos)
+- Scroll down to see “Featured Categories”
+- View “Latest Works” gallery
+- Read “Customer Reviews”
+- Use the WhatsApp button to message the studio
+- Use the Contact Details button to open the Contact page
+
+How to use it step-by-step:
+1. Open the website.
+2. Scroll slowly to explore each section.
+3. To see a full gallery, click “Explore Full Portfolio” or open “Portfolio” from the top menu.
+
+### 2.2 Top menu navigation
+The top menu has:
+- Home
+- Portfolio
+- About
+- Contact
+
+Mobile menu:
+- Tap the menu button on the top right to open/close navigation links.
+
+### 2.3 Portfolio page ("/portfolio")
+What you see:
+- A grid of categories (example: Wedding, Baby Shower, Outdoor, etc.)
+- Each category shows photo count and video count
+
+How to open a category:
+1. Go to Portfolio.
+2. Click any category card.
+3. You will be taken to that category’s page.
+
+### 2.4 Category page ("/portfolio/<category>")
+What you can do:
+- Browse photos and videos for that category
+- Play videos directly on the page (if videos exist)
+
+If a category is missing:
+- You may see a “Not Found” page. This means the category does not exist or the API is not reachable.
+
+### 2.5 About page ("/about")
+What you see:
+- Studio story text
+- Founder/owner portrait (if uploaded from Admin)
+- Studio “events covered / years / happy families” counters
+- Contact details section
+
+### 2.6 Contact page ("/contact")
+What you can do:
+- Tap “WhatsApp Us” to open WhatsApp chat
+- Tap “Call …” to call from your phone
+- View studio contact details
+- View location map (only if a Google Maps embed link is set in Admin)
+
+## 3) Admin Panel (Studio Staff Side)
+
+### 3.1 How to open Admin Login
+There are two ways:
+1. Direct link: http://localhost:3000/admin/login
+2. Hidden shortcut:
+   - Scroll to the bottom footer on any public page.
+   - Quickly click 5 times on the “© … Surya Photography …” footer text.
+   - Admin Login page opens automatically.
+
+### 3.2 Admin Login ("/admin/login")
+Fields:
+- Username (email)
+- Password
+
+Steps:
+1. Enter the admin username.
+2. Enter the admin password.
+3. Click “Sign In”.
+4. After login, you are redirected to the Admin Dashboard.
+
+If login fails:
+- You will see “Invalid username or password”.
+- Confirm you are typing the correct password.
+- If credentials were changed, use the updated username/password.
+
+### 3.3 Admin Navigation (left sidebar on desktop / bottom nav on mobile)
+Menu items:
+- Dashboard
+- Inquiries
+- Functions
+- Portfolio
+- Studio
+- Account
+
+Logout:
+- Click “Logout” in the sidebar to end the session.
+
+### 3.4 Dashboard ("/admin/dashboard")
+Purpose:
+- Quick studio overview and counts
+
+What you see:
+- Upcoming Functions
+- New Inquiries
+- Pending Albums
+- Pending Video Edits
+- Pending Deliveries
+- Total Uploads
+
+Quick lists:
+- Upcoming Functions list
+- Recent Inquiries list
+
+Tips:
+- Use “View all” to open full Functions or Inquiries lists.
+
+### 3.5 Inquiries ("/admin/inquiries")
+Purpose:
+- Track customer calls/leads, update their status, and convert to bookings
+
+#### Add inquiry (manual entry)
+Steps:
+1. Fill Customer name
+2. Fill Phone number
+3. Fill Occasion
+4. Optional: Wanted date
+5. Optional: Address
+6. Optional: Notes
+7. Click “Add inquiry”
+
+#### Filter inquiries by status
+Status buttons:
+- Pending
+- Spoken
+- Converted
+- Cancelled
+- All
+
+Steps:
+1. Click a status button.
+2. The table updates to show only that status.
+
+#### Update inquiry status
+Available actions (depend on current status):
+- Mark spoken
+- Cancel
+- Reopen
+- Convert to order
+- Delete
+
+Recommended workflow:
+1. New lead comes in → keep as Pending
+2. After speaking → mark Spoken
+3. If confirmed booking → Convert to order
+4. If not proceeding → mark Cancelled
+
+Important:
+- Delete removes the inquiry permanently.
+
+### 3.6 Functions (Bookings) ("/admin/functions")
+Purpose:
+- Track every confirmed booking (functions / celebrations) and delivery progress
+
+#### Add Booking
+Steps:
+1. Click “Add Booking”
+2. Fill:
+   - Client name
+   - Phone number
+   - Occasion
+   - Event dates (first date is required; add multiple days if needed)
+   - Total amount (optional but recommended)
+   - Advance received (optional but recommended)
+3. Add booking notes (optional)
+4. Select Services booked (checkboxes)
+5. Select Complimentary gifts (checkboxes)
+6. Click “Save This Celebration”
+
+#### View and update an existing booking
+For each booking you can update:
+- Overall status
+- Album status
+- Video status
+
+Steps:
+1. Open Functions page.
+2. Find the booking.
+3. Use dropdowns (Overall/Album/Video) to update progress.
+4. Use “Details” to view services/complimentary/notes.
+
+Delete booking:
+- Click “Delete”
+- Confirm the popup
+- Booking is removed permanently
+
+### 3.7 Portfolio ("/admin/portfolio")
+Purpose:
+- Upload and remove photos/videos shown on the public portfolio
+
+#### Upload media
+Steps:
+1. Select a Category from the dropdown.
+2. Click “Upload Media”.
+3. Select one or multiple files (images and/or videos).
+4. Wait until upload finishes (button shows “Uploading...”).
+
+How media type is chosen:
+- If the file is a video (file type starts with “video”), it is saved as video.
+- Otherwise it is saved as photo.
+
+#### Delete media
+Steps:
+1. Find the photo/video thumbnail.
+2. Click “Delete”.
+3. Confirm the popup.
+
+Important:
+- Delete is permanent.
+- If a photo/video is used as a category cover image, deleting it may affect the category look.
+
+### 3.8 Studio (Branding & Contact) ("/admin/settings")
+Purpose:
+- Update what families see on the public website (logo, portrait, testimonials, contact details, counters)
+
+#### Upload studio logo
+Requirements:
+- PNG format
+
+Steps:
+1. In “Studio logo” section, click “Upload logo”
+2. Choose a PNG file
+3. Wait until upload completes
+
+Remove logo:
+1. Click “Remove logo”
+2. Confirm
+
+#### Upload owner portrait (About page)
+Steps:
+1. In “Owner portrait” section, click “Upload portrait”
+2. Choose an image file
+3. Wait until upload completes
+
+Remove portrait:
+1. Click “Remove photo”
+2. Confirm
+
+#### Manage testimonials (Kind words)
+Add a review:
+1. Click “+ Add review”
+2. Enter Name (example: “Priya & Arun”)
+3. Enter Their words
+
+Remove a review:
+1. Click “Remove”
+
+Save changes:
+- Click “Save all changes”
+
+#### Update counters (Hearts we’ve touched)
+Fields:
+- Events covered
+- Years of craft
+- Happy families
+
+Steps:
+1. Edit the values
+2. Click “Save all changes”
+
+#### Update contact details
+Fields include:
+- Email
+- Primary mobile
+- Secondary mobile
+- WhatsApp number
+- Instagram URL
+- YouTube URL
+- Studio address
+- Pincode
+
+Steps:
+1. Edit details
+2. Click “Save all changes”
+
+Notes:
+- Contact page uses these details.
+- Map is shown only if Google Maps embed is configured in backend settings.
+
+### 3.9 Account ("/admin/account")
+Purpose:
+- Change admin username and/or password
+
+Steps:
+1. Enter Current password (required)
+2. Enter New username (optional)
+3. Enter New password (optional)
+4. Confirm new password (if using new password)
+5. Click “Save changes”
+
+Rules:
+- You must enter at least a new username or a new password
+- New password and confirmation must match
+
+## 4) Common Issues (Quick Fixes)
+
+### 4.1 Website not loading
+Check:
+- Is the frontend running on port 3000?
+- Is the API running on port 8080?
+
+If API is down:
+- Home/Portfolio pages may show missing content.
+
+### 4.2 Admin pages keep redirecting to login
+Reason:
+- Session token is missing or expired.
+
+Fix:
+1. Open /admin/login
+2. Login again
+
+### 4.3 Uploads not showing
+Check:
+- API must be running
+- Upload storage must be available on the server
+
+## 5) Safety and good practice
+- Do not share admin username/password publicly.
+- After finishing admin work, always click Logout.
+- Keep a backup of uploads and booking data regularly.

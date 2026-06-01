@@ -4,15 +4,23 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
-    env_file:
-      - ./backend/.env
-    volumes:
-      - ./uploads:/app/uploads
-      - ./backend/data:/app/data
     environment:
+      PORT: 8080
+      APP_ENV: ${APP_ENV:-production}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
       UPLOAD_DIR: /app/uploads
       DATA_DIR: /app/data
-      APP_ENV: production
+      PUBLIC_MEDIA_URL: ${PUBLIC_MEDIA_URL:-http://localhost:8080/uploads}
+    volumes:
+      - uploads:/app/uploads
+      - data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
 
   web:
     build:
@@ -25,8 +33,13 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
       NEXT_PUBLIC_MEDIA_URL: ${NEXT_PUBLIC_MEDIA_URL:-http://localhost:8080/uploads}
       NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+
+volumes:
+  uploads:
+  data:

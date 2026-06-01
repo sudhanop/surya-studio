@@ -1,0 +1,43 @@
+services:
+  api:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      APP_ENV: production
+      FRONTEND_URL: ${FRONTEND_URL?FRONTEND_URL is required}
+      CORS_ORIGINS: ${CORS_ORIGINS?CORS_ORIGINS is required}
+      JWT_SECRET: ${JWT_SECRET?JWT_SECRET is required}
+      UPLOAD_DIR: /app/uploads
+      DATA_DIR: /app/data
+      PUBLIC_MEDIA_URL: ${PUBLIC_MEDIA_URL?PUBLIC_MEDIA_URL is required}
+    volumes:
+      - uploads:/app/uploads
+      - data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL?NEXT_PUBLIC_API_URL is required}
+        NEXT_PUBLIC_MEDIA_URL: ${NEXT_PUBLIC_MEDIA_URL?NEXT_PUBLIC_MEDIA_URL is required}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL?NEXT_PUBLIC_SITE_URL is required}
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL?NEXT_PUBLIC_API_URL is required}
+      NEXT_PUBLIC_MEDIA_URL: ${NEXT_PUBLIC_MEDIA_URL?NEXT_PUBLIC_MEDIA_URL is required}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL?NEXT_PUBLIC_SITE_URL is required}
+
+volumes:
+  uploads:
+  data:
