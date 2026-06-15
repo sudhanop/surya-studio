@@ -2,51 +2,70 @@ package repositories
 
 import (
 	"context"
-	"database/sql"
+	"os"
+	"path/filepath"
+	"sync"
 )
 
-type SettingsRepo struct{ db *sql.DB }
+type SettingsRepo struct {
+	file string
+	mu   sync.Mutex
+}
 
-func NewSettingsRepo(db *sql.DB) *SettingsRepo { return &SettingsRepo{db: db} }
+func NewSettingsRepo(dataDir string) *SettingsRepo {
+	return &SettingsRepo{file: filepath.Join(dataDir, "settings.json")}
+}
 
-func (r *SettingsRepo) GetAll(ctx context.Context) (map[string]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT setting_key, setting_value FROM dbo.site_settings`)
+func (r *SettingsRepo) load() (map[string]string, error) {
+	var out map[string]string
+	err := readJSONFile(r.file, &out)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]string{}, nil
+		}
 		return nil, err
 	}
-	defer rows.Close()
-	out := make(map[string]string)
-	for rows.Next() {
-		var k string
-		var v sql.NullString
-		if err := rows.Scan(&k, &v); err != nil {
-			return nil, err
-		}
-		if v.Valid {
-			out[k] = v.String
-		} else {
-			out[k] = ""
-		}
+	if out == nil {
+		out = map[string]string{}
 	}
-	return out, rows.Err()
+	return out, nil
+}
+
+func (r *SettingsRepo) save(m map[string]string) error {
+	return writeJSONFile(r.file, m)
+}
+
+func (r *SettingsRepo) GetAll(ctx context.Context) (map[string]string, error) {
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.load()
 }
 
 func (r *SettingsRepo) Set(ctx context.Context, key, value string) error {
-	_, err := r.db.ExecContext(ctx, `
-		MERGE dbo.site_settings AS t
-		USING (SELECT @p1 AS setting_key, @p2 AS setting_value) AS s
-		ON t.setting_key = s.setting_key
-		WHEN MATCHED THEN UPDATE SET setting_value = s.setting_value, updated_at = SYSUTCDATETIME()
-		WHEN NOT MATCHED THEN INSERT (setting_key, setting_value) VALUES (s.setting_key, s.setting_value);`,
-		key, value)
-	return err
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	m, err := r.load()
+	if err != nil {
+		return err
+	}
+	m[key] = value
+	return r.save(m)
 }
 
 func (r *SettingsRepo) SetMany(ctx context.Context, pairs map[string]string) error {
-	for k, v := range pairs {
-		if err := r.Set(ctx, k, v); err != nil {
-			return err
-		}
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	m, err := r.load()
+	if err != nil {
+		return err
 	}
-	return nil
+	for k, v := range pairs {
+		m[k] = v
+	}
+	return r.save(m)
 }

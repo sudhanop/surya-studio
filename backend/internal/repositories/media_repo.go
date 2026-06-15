@@ -2,172 +2,284 @@ package repositories
 
 import (
 	"context"
-	"database/sql"
+	"os"
+	"path/filepath"
+	"sort"
+	"sync"
+	"time"
 
 	"github.com/suryaphotography/backend/internal/models"
 )
 
-type MediaRepo struct{ db *sql.DB }
+type MediaRepo struct {
+	file           string
+	categoriesFile string
+	mu             sync.Mutex
+}
 
-func NewMediaRepo(db *sql.DB) *MediaRepo { return &MediaRepo{db: db} }
-
-const mediaSelect = `
-	SELECT pm.id, pm.category_id, pm.title, pm.caption, pm.media_type, pm.file_path, pm.thumbnail_path,
-		pm.mime_type, pm.file_size_bytes, pm.duration_sec, pm.is_featured, pm.display_order, pm.is_published,
-		pm.created_at, pm.updated_at, c.slug, c.name
-	FROM dbo.portfolio_media pm
-	INNER JOIN dbo.categories c ON c.id = pm.category_id`
-
-func scanMedia(rows *sql.Rows) ([]models.PortfolioMedia, error) {
-	var list []models.PortfolioMedia
-	for rows.Next() {
-		var m models.PortfolioMedia
-		var title, caption, thumb, mime sql.NullString
-		var size sql.NullInt64
-		var dur sql.NullInt32
-		if err := rows.Scan(&m.ID, &m.CategoryID, &title, &caption, &m.MediaType, &m.FilePath, &thumb,
-			&mime, &size, &dur, &m.IsFeatured, &m.DisplayOrder, &m.IsPublished,
-			&m.CreatedAt, &m.UpdatedAt, &m.CategorySlug, &m.CategoryName); err != nil {
-			return nil, err
-		}
-		if title.Valid {
-			m.Title = &title.String
-		}
-		if caption.Valid {
-			m.Caption = &caption.String
-		}
-		if thumb.Valid {
-			m.ThumbnailPath = &thumb.String
-		}
-		if mime.Valid {
-			m.MimeType = &mime.String
-		}
-		if size.Valid {
-			m.FileSizeBytes = &size.Int64
-		}
-		if dur.Valid {
-			d := int(dur.Int32)
-			m.DurationSec = &d
-		}
-		list = append(list, m)
+func NewMediaRepo(dataDir string) *MediaRepo {
+	return &MediaRepo{
+		file:           filepath.Join(dataDir, "media.json"),
+		categoriesFile: filepath.Join(dataDir, "categories.json"),
 	}
-	return list, rows.Err()
+}
+
+func (r *MediaRepo) load() ([]models.PortfolioMedia, error) {
+	var list []models.PortfolioMedia
+	err := readJSONFile(r.file, &list)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []models.PortfolioMedia{}, nil
+		}
+		return nil, err
+	}
+	if list == nil {
+		list = []models.PortfolioMedia{}
+	}
+	return list, nil
+}
+
+func (r *MediaRepo) save(list []models.PortfolioMedia) error {
+	return writeJSONFile(r.file, list)
 }
 
 func (r *MediaRepo) ListByCategory(ctx context.Context, categoryID int64, mediaType string, publishedOnly bool) ([]models.PortfolioMedia, error) {
-	q := mediaSelect + ` WHERE pm.category_id = @p1`
-	args := []any{categoryID}
-	if mediaType != "" {
-		q += ` AND pm.media_type = @p2`
-		args = append(args, mediaType)
-	}
-	if publishedOnly {
-		q += ` AND pm.is_published = 1`
-	}
-	q += ` ORDER BY pm.display_order, pm.created_at DESC`
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	rows, err := r.db.QueryContext(ctx, q, args...)
+	list, err := r.load()
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return scanMedia(rows)
+	out := make([]models.PortfolioMedia, 0, len(list))
+	for _, it := range list {
+		if it.CategoryID != categoryID {
+			continue
+		}
+		if mediaType != "" && it.MediaType != mediaType {
+			continue
+		}
+		if publishedOnly && !it.IsPublished {
+			continue
+		}
+		out = append(out, it)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DisplayOrder != out[j].DisplayOrder {
+			return out[i].DisplayOrder < out[j].DisplayOrder
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return r.enrichCategory(out)
 }
 
 func (r *MediaRepo) ListFeatured(ctx context.Context, limit int) ([]models.PortfolioMedia, error) {
-	rows, err := r.db.QueryContext(ctx, mediaSelect+`
-		WHERE pm.is_featured = 1 AND pm.is_published = 1
-		ORDER BY pm.display_order, pm.created_at DESC
-		OFFSET 0 ROWS FETCH NEXT @p1 ROWS ONLY`, limit)
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return scanMedia(rows)
+	out := make([]models.PortfolioMedia, 0, len(list))
+	for _, it := range list {
+		if it.IsFeatured && it.IsPublished {
+			out = append(out, it)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DisplayOrder != out[j].DisplayOrder {
+			return out[i].DisplayOrder < out[j].DisplayOrder
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return r.enrichCategory(out)
 }
 
 func (r *MediaRepo) ListLatest(ctx context.Context, limit int) ([]models.PortfolioMedia, error) {
-	rows, err := r.db.QueryContext(ctx, mediaSelect+`
-		WHERE pm.is_published = 1 AND pm.media_type = 'photo'
-		ORDER BY pm.created_at DESC
-		OFFSET 0 ROWS FETCH NEXT @p1 ROWS ONLY`, limit)
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return scanMedia(rows)
+	out := make([]models.PortfolioMedia, 0, len(list))
+	for _, it := range list {
+		if it.IsPublished && it.MediaType == "photo" {
+			out = append(out, it)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return r.enrichCategory(out)
 }
 
 func (r *MediaRepo) GetByID(ctx context.Context, id int64) (*models.PortfolioMedia, error) {
-	row := r.db.QueryRowContext(ctx, mediaSelect+` WHERE pm.id = @p1`, id)
-	var m models.PortfolioMedia
-	var title, caption, thumb, mime sql.NullString
-	var size sql.NullInt64
-	var dur sql.NullInt32
-	err := row.Scan(&m.ID, &m.CategoryID, &title, &caption, &m.MediaType, &m.FilePath, &thumb,
-		&mime, &size, &dur, &m.IsFeatured, &m.DisplayOrder, &m.IsPublished,
-		&m.CreatedAt, &m.UpdatedAt, &m.CategorySlug, &m.CategoryName)
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
 	if err != nil {
 		return nil, err
 	}
-	if title.Valid {
-		m.Title = &title.String
+	for _, it := range list {
+		if it.ID == id {
+			cp := it
+			enriched, err := r.enrichCategory([]models.PortfolioMedia{cp})
+			if err != nil {
+				return nil, err
+			}
+			out := enriched[0]
+			return &out, nil
+		}
 	}
-	if caption.Valid {
-		m.Caption = &caption.String
-	}
-	if thumb.Valid {
-		m.ThumbnailPath = &thumb.String
-	}
-	if mime.Valid {
-		m.MimeType = &mime.String
-	}
-	if size.Valid {
-		m.FileSizeBytes = &size.Int64
-	}
-	if dur.Valid {
-		d := int(dur.Int32)
-		m.DurationSec = &d
-	}
-	return &m, nil
+	return nil, ErrNotFound
 }
 
 func (r *MediaRepo) Create(ctx context.Context, m *models.PortfolioMedia) (int64, error) {
-	var id int64
-	err := r.db.QueryRowContext(ctx, `
-		INSERT INTO dbo.portfolio_media (category_id, title, caption, media_type, file_path, thumbnail_path, mime_type, file_size_bytes, duration_sec, is_featured, display_order, is_published)
-		OUTPUT INSERTED.id
-		VALUES (@p1,@p2,@p3,@p4,@p5,@p6,@p7,@p8,@p9,@p10,@p11,@p12)`,
-		m.CategoryID, m.Title, m.Caption, m.MediaType, m.FilePath, m.ThumbnailPath, m.MimeType, m.FileSizeBytes, m.DurationSec, m.IsFeatured, m.DisplayOrder, m.IsPublished,
-	).Scan(&id)
-	return id, err
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return 0, err
+	}
+	var maxID int64
+	for _, it := range list {
+		if it.ID > maxID {
+			maxID = it.ID
+		}
+	}
+	now := time.Now().UTC()
+	n := *m
+	n.ID = maxID + 1
+	n.CreatedAt = now
+	n.UpdatedAt = now
+	list = append(list, n)
+	if err := r.save(list); err != nil {
+		return 0, err
+	}
+	return n.ID, nil
 }
 
 func (r *MediaRepo) Update(ctx context.Context, m *models.PortfolioMedia) error {
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE dbo.portfolio_media SET title=@p1, caption=@p2, is_featured=@p3, display_order=@p4, is_published=@p5, updated_at=SYSUTCDATETIME()
-		WHERE id=@p6`, m.Title, m.Caption, m.IsFeatured, m.DisplayOrder, m.IsPublished, m.ID)
-	return err
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for i := range list {
+		if list[i].ID == m.ID {
+			list[i].Title = m.Title
+			list[i].Caption = m.Caption
+			list[i].IsFeatured = m.IsFeatured
+			list[i].DisplayOrder = m.DisplayOrder
+			list[i].IsPublished = m.IsPublished
+			list[i].UpdatedAt = now
+			return r.save(list)
+		}
+	}
+	return ErrNotFound
 }
 
 func (r *MediaRepo) Delete(ctx context.Context, id int64) (*models.PortfolioMedia, error) {
-	m, err := r.GetByID(ctx, id)
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
 	if err != nil {
 		return nil, err
 	}
-	_, err = r.db.ExecContext(ctx, `DELETE FROM dbo.portfolio_media WHERE id = @p1`, id)
-	return m, err
+	var deleted *models.PortfolioMedia
+	out := list[:0]
+	for _, it := range list {
+		if it.ID == id {
+			cp := it
+			deleted = &cp
+			continue
+		}
+		out = append(out, it)
+	}
+	if deleted == nil {
+		return nil, ErrNotFound
+	}
+	if err := r.save(out); err != nil {
+		return nil, err
+	}
+	enriched, err := r.enrichCategory([]models.PortfolioMedia{*deleted})
+	if err != nil {
+		return nil, err
+	}
+	ret := enriched[0]
+	return &ret, nil
 }
 
 func (r *MediaRepo) CountAll(ctx context.Context) (int, error) {
-	var n int
-	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM dbo.portfolio_media`).Scan(&n)
-	return n, err
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return 0, err
+	}
+	return len(list), nil
 }
 
 func (r *MediaRepo) CountRecent(ctx context.Context, days int) (int, error) {
-	var n int
-	err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM dbo.portfolio_media WHERE created_at >= DATEADD(day, -@p1, SYSUTCDATETIME())`, days).Scan(&n)
-	return n, err
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return 0, err
+	}
+	since := time.Now().UTC().AddDate(0, 0, -days)
+	n := 0
+	for _, it := range list {
+		if it.CreatedAt.After(since) || it.CreatedAt.Equal(since) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (r *MediaRepo) enrichCategory(list []models.PortfolioMedia) ([]models.PortfolioMedia, error) {
+	var cats []models.Category
+	err := readJSONFile(r.categoriesFile, &cats)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	cmap := map[int64]models.Category{}
+	for _, c := range cats {
+		cmap[c.ID] = c
+	}
+	out := make([]models.PortfolioMedia, 0, len(list))
+	for _, m := range list {
+		if c, ok := cmap[m.CategoryID]; ok {
+			m.CategorySlug = c.Slug
+			m.CategoryName = c.Name
+		}
+		out = append(out, m)
+	}
+	return out, nil
 }

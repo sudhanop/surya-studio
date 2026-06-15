@@ -13,13 +13,9 @@ type Config struct {
 	AppEnv            string
 	FrontendURL       string
 	CORSOrigins       string
-	DBServer          string
-	DBDatabase        string
-	DBUser            string
-	DBPassword        string
-	DBTrusted         bool
 	JWTSecret         string
 	JWTExpiryHours    int
+	DataDir           string
 	UploadDir         string
 	MaxUploadMB       int64
 	PublicMediaURL    string
@@ -54,13 +50,9 @@ func Load() (*Config, error) {
 		AppEnv:          getEnv("APP_ENV", "development"),
 		FrontendURL:     getEnv("FRONTEND_URL", "http://localhost:3000"),
 		CORSOrigins:     getEnv("CORS_ORIGINS", getEnv("FRONTEND_URL", "http://localhost:3000")),
-		DBServer:        getEnv("DB_SERVER", "localhost,1433"),
-		DBDatabase:      getEnv("DB_DATABASE", "SuryaPhotography"),
-		DBUser:          os.Getenv("DB_USER"),
-		DBPassword:      os.Getenv("DB_PASSWORD"),
-		DBTrusted:       strings.EqualFold(getEnv("DB_TRUSTED_CONNECTION", "true"), "true"),
 		JWTSecret:       getEnv("JWT_SECRET", "dev-secret-change-in-production"),
 		JWTExpiryHours:  expiry,
+		DataDir:         getEnv("DATA_DIR", "data"),
 		UploadDir:       getEnv("UPLOAD_DIR", "../uploads"),
 		MaxUploadMB:     maxMB,
 		PublicMediaURL:  strings.TrimRight(getEnv("PUBLIC_MEDIA_URL", "http://localhost:8080/uploads"), "/"),
@@ -81,13 +73,6 @@ func Load() (*Config, error) {
 		Pincode:         getEnv("STUDIO_PINCODE", "637408"),
 		GoogleMapsEmbed: getEnv("GOOGLE_MAPS_EMBED", ""),
 	}, nil
-}
-
-func (c *Config) ConnectionString() string {
-	if c.DBTrusted {
-		return "server=" + c.DBServer + ";database=" + c.DBDatabase + ";trusted_connection=yes;encrypt=disable"
-	}
-	return "server=" + c.DBServer + ";user id=" + c.DBUser + ";password=" + c.DBPassword + ";database=" + c.DBDatabase + ";encrypt=disable"
 }
 
 func getEnv(key, fallback string) string {

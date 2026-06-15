@@ -8,7 +8,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/suryaphotography/backend/internal/config"
-	"github.com/suryaphotography/backend/internal/database"
 	"github.com/suryaphotography/backend/internal/email"
 	"github.com/suryaphotography/backend/internal/handlers"
 	"github.com/suryaphotography/backend/internal/repositories"
@@ -38,23 +37,22 @@ func main() {
 		log.Fatal(err)
 	}
 
-	db, err := database.Connect(cfg)
-	if err != nil {
-		log.Fatalf("database: %v", err)
+	dataDir, _ := filepath.Abs(cfg.DataDir)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		log.Fatal(err)
 	}
-	defer db.Close()
 
 	store, err := storage.NewLocalStorage(uploadDir, cfg.PublicMediaURL)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	adminRepo := repositories.NewAdminRepo(db)
-	catRepo := repositories.NewCategoryRepo(db)
-	mediaRepo := repositories.NewMediaRepo(db)
-	inquiryRepo := repositories.NewInquiryRepo(db)
-	funcRepo := repositories.NewFunctionRepo(db)
-	settingsRepo := repositories.NewSettingsRepo(db)
+	adminRepo := repositories.NewAdminRepo(dataDir)
+	catRepo := repositories.NewCategoryRepo(dataDir)
+	mediaRepo := repositories.NewMediaRepo(dataDir)
+	inquiryRepo := repositories.NewInquiryRepo(dataDir)
+	funcRepo := repositories.NewFunctionRepo(dataDir)
+	settingsRepo := repositories.NewSettingsRepo(dataDir)
 
 	authSvc := services.NewAuthService(cfg, adminRepo)
 	dashSvc := services.NewDashboardService(funcRepo, inquiryRepo, mediaRepo)

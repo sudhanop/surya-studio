@@ -2,13 +2,13 @@
 
 ## Pre-deploy checklist
 
-- [ ] Run `database/create-database.bat` on production SQL Server
 - [ ] Change admin password if needed (default `surya@1995`)
 - [ ] Set strong `JWT_SECRET` (32+ random characters)
 - [ ] Configure `SMTP_*` for inquiry email notifications
 - [ ] Set real contact URLs in backend `.env`
 - [ ] Point `PUBLIC_MEDIA_URL` to your public API uploads URL
 - [ ] Set `CORS_ORIGINS` and `FRONTEND_URL` to your live domain
+- [ ] Persist `backend/data/` and `uploads/` on disk (JSON + media)
 
 ## Environment variables
 
@@ -20,11 +20,8 @@
 | `APP_ENV` | `production` |
 | `FRONTEND_URL` | `https://suryaphotography.com` |
 | `CORS_ORIGINS` | `https://suryaphotography.com` |
-| `DB_SERVER` | `your-server.database.windows.net` |
-| `DB_DATABASE` | `SuryaPhotography` |
-| `DB_USER` / `DB_PASSWORD` | SQL credentials |
-| `DB_TRUSTED_CONNECTION` | `false` (cloud) |
 | `JWT_SECRET` | long random string |
+| `DATA_DIR` | `/app/data` (Docker) or `data` (local) |
 | `UPLOAD_DIR` | `/app/uploads` (Docker) or `../uploads` |
 | `PUBLIC_MEDIA_URL` | `https://api.yoursite.com/uploads` |
 
@@ -49,7 +46,7 @@
 ```bash
 # Copy and edit env files first
 cp backend/.env.example backend/.env
-# Edit backend/.env with production SQL + secrets
+# Edit backend/.env with production secrets
 
 export NEXT_PUBLIC_API_URL=https://api.yoursite.com
 export NEXT_PUBLIC_MEDIA_URL=https://api.yoursite.com/uploads
@@ -58,18 +55,31 @@ export NEXT_PUBLIC_SITE_URL=https://yoursite.com
 docker compose up -d --build
 ```
 
-SQL Server must be reachable from the `api` container (not included in compose).
+## Option C — AWS EC2 (t3.micro VM)
 
-## Option C — AWS (recommended pattern)
+Recommended setup: run both the Go API and Next.js app with Docker Compose, and persist JSON + uploads on the EC2 disk.
 
-| Component | Service |
-|-----------|---------|
-| Frontend | Amplify / ECS / EC2 + Node |
-| API | ECS / EC2 + Go binary |
-| Database | RDS SQL Server or existing SSMS host |
-| Media | S3 + CloudFront (replace `LocalStorage` later) |
+1. Create an EC2 instance (t3.micro), attach an EBS volume (or use the root volume) with enough space for `uploads/`.
+2. Security Group inbound:
+   - 22 (SSH) from your IP
+   - 80 (HTTP) and 443 (HTTPS) from the internet (or from a load balancer)
+3. Install Docker and Docker Compose on the instance.
+4. Copy this repo to the instance (git clone or upload a zip).
+5. Create and edit `backend/.env` (copy from `.env.example`) and set:
+   - `APP_ENV=production`
+   - `JWT_SECRET=...`
+   - `FRONTEND_URL=https://your-domain`
+   - `CORS_ORIGINS=https://your-domain`
+   - `PUBLIC_MEDIA_URL=https://api.your-domain/uploads` (or your reverse-proxy path)
+6. Start:
 
-Uploads currently use local disk; migrate `internal/storage` to S3 when scaling.
+```bash
+docker compose up -d --build
+```
+
+Persisted data:
+- `backend/data/` stores JSON (admins, settings, categories, media, inquiries, functions)
+- `uploads/` stores uploaded files
 
 ## Post-deploy verification
 
@@ -83,7 +93,6 @@ Uploads currently use local disk; migrate `internal/storage` to S3 when scaling.
 ## Security notes
 
 - Use HTTPS everywhere
-- Restrict SQL Server firewall to API host only
 - Remove or protect Swagger in production
 - Rotate `JWT_SECRET` if compromised
-- Back up `uploads/` and database regularly
+- Back up `backend/data/` and `uploads/` regularly

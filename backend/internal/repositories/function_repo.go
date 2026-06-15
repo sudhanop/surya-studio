@@ -2,248 +2,262 @@ package repositories
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/suryaphotography/backend/internal/models"
 )
 
-type FunctionRepo struct{ db *sql.DB }
+type FunctionRepo struct {
+	file string
+	mu   sync.Mutex
+}
 
-func NewFunctionRepo(db *sql.DB) *FunctionRepo { return &FunctionRepo{db: db} }
+func NewFunctionRepo(dataDir string) *FunctionRepo {
+	return &FunctionRepo{file: filepath.Join(dataDir, "functions.json")}
+}
 
-func scanFunction(row interface{ Scan(...any) error }) (*models.Function, error) {
-	var f models.Function
-	var inquiry sql.NullInt64
-	var addr, editor, notes, links, bookingNotes, servicesJSON, complimentaryJSON sql.NullString
-	var assigned sql.NullTime
-	err := row.Scan(&f.ID, &inquiry, &f.CustomerName, &f.PhoneNumber, &addr, &f.FunctionType, &f.FunctionDate,
-		&f.TotalAmount, &f.AdvancePaid, &f.BalanceAmount,
-		&editor, &assigned, &f.AlbumStatus, &f.VideoStatus, &f.DeliveryStatus, &f.OverallStatus,
-		&bookingNotes, &servicesJSON, &complimentaryJSON, &notes, &links, &f.CreatedAt, &f.UpdatedAt)
+func (r *FunctionRepo) load() ([]models.Function, error) {
+	var list []models.Function
+	err := readJSONFile(r.file, &list)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []models.Function{}, nil
+		}
 		return nil, err
 	}
-	if inquiry.Valid {
-		f.InquiryID = &inquiry.Int64
+	if list == nil {
+		list = []models.Function{}
 	}
-	if addr.Valid {
-		f.Address = &addr.String
-	}
-	if editor.Valid {
-		f.AssignedEditor = &editor.String
-	}
-	if assigned.Valid {
-		f.AssignedDate = &assigned.Time
-	}
-	if bookingNotes.Valid {
-		f.CustomerBookingNotes = &bookingNotes.String
-	}
-	if notes.Valid {
-		f.AdminNotes = &notes.String
-	}
-	if links.Valid {
-		f.DriveLinks = &links.String
-	}
-	if servicesJSON.Valid && servicesJSON.String != "" {
-		_ = json.Unmarshal([]byte(servicesJSON.String), &f.Services)
-	}
-	if complimentaryJSON.Valid && complimentaryJSON.String != "" {
-		_ = json.Unmarshal([]byte(complimentaryJSON.String), &f.Complimentary)
-	}
-	if f.Services == nil {
-		f.Services = []string{}
-	}
-	if f.Complimentary == nil {
-		f.Complimentary = []string{}
-	}
-	return &f, nil
-}
-
-const functionSelect = `
-	SELECT id, inquiry_id, customer_name, phone_number, address, function_type, function_date,
-		total_amount, advance_paid, balance_amount, assigned_editor, assigned_date,
-		album_status, video_status, delivery_status, overall_status,
-		customer_booking_notes, services_json, complimentary_json, admin_notes, drive_links, created_at, updated_at
-	FROM dbo.functions`
-
-func (r *FunctionRepo) enrich(ctx context.Context, f *models.Function) error {
-	dates, err := r.ListEventDates(ctx, f.ID)
-	if err != nil {
-		return err
-	}
-	f.EventDates = dates
-	return nil
-}
-
-func (r *FunctionRepo) enrichAll(ctx context.Context, list []models.Function) ([]models.Function, error) {
 	for i := range list {
-		if err := r.enrich(ctx, &list[i]); err != nil {
-			return nil, err
-		}
+		normalizeFunction(&list[i])
 	}
 	return list, nil
 }
 
-func (r *FunctionRepo) List(ctx context.Context, status string, limit int) ([]models.Function, error) {
-	var rows *sql.Rows
-	var err error
-	if status != "" {
-		rows, err = r.db.QueryContext(ctx, functionSelect+` WHERE overall_status = @p1 ORDER BY function_date ASC OFFSET 0 ROWS FETCH NEXT @p2 ROWS ONLY`, status, limit)
-	} else {
-		rows, err = r.db.QueryContext(ctx, functionSelect+` ORDER BY function_date ASC OFFSET 0 ROWS FETCH NEXT @p1 ROWS ONLY`, limit)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	list, err := r.scanAll(rows)
-	if err != nil {
-		return nil, err
-	}
-	return r.enrichAll(ctx, list)
+func (r *FunctionRepo) save(list []models.Function) error {
+	return writeJSONFile(r.file, list)
 }
 
-func (r *FunctionRepo) scanAll(rows *sql.Rows) ([]models.Function, error) {
-	var list []models.Function
-	for rows.Next() {
-		f, err := scanFunction(rows)
-		if err != nil {
-			return nil, err
-		}
-		list = append(list, *f)
+func (r *FunctionRepo) List(ctx context.Context, status string, limit int) ([]models.Function, error) {
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return nil, err
 	}
-	return list, rows.Err()
+
+	out := make([]models.Function, 0, len(list))
+	for _, f := range list {
+		if status != "" && f.OverallStatus != status {
+			continue
+		}
+		out = append(out, f)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].FunctionDate.Before(out[j].FunctionDate)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (r *FunctionRepo) Upcoming(ctx context.Context, limit int) ([]models.Function, error) {
-	rows, err := r.db.QueryContext(ctx, functionSelect+`
-		WHERE overall_status IN ('upcoming', 'editing') AND function_date >= CAST(GETUTCDATE() AS DATE)
-		ORDER BY function_date ASC OFFSET 0 ROWS FETCH NEXT @p1 ROWS ONLY`, limit)
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	list, err := r.scanAll(rows)
-	if err != nil {
-		return nil, err
+	today := todayUTC()
+
+	out := make([]models.Function, 0, len(list))
+	for _, f := range list {
+		if f.OverallStatus != "upcoming" && f.OverallStatus != "editing" {
+			continue
+		}
+		if f.FunctionDate.Before(today) {
+			continue
+		}
+		out = append(out, f)
 	}
-	return r.enrichAll(ctx, list)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].FunctionDate.Before(out[j].FunctionDate)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (r *FunctionRepo) GetByID(ctx context.Context, id int64) (*models.Function, error) {
-	row := r.db.QueryRowContext(ctx, functionSelect+` WHERE id = @p1`, id)
-	f, err := scanFunction(row)
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
 	if err != nil {
 		return nil, err
 	}
-	if err := r.enrich(ctx, f); err != nil {
-		return nil, err
+	for _, f := range list {
+		if f.ID == id {
+			cp := f
+			normalizeFunction(&cp)
+			return &cp, nil
+		}
 	}
-	return f, nil
-}
-
-func servicesJSON(services []string) interface{} {
-	if len(services) == 0 {
-		return nil
-	}
-	b, _ := json.Marshal(services)
-	return string(b)
+	return nil, ErrNotFound
 }
 
 func (r *FunctionRepo) Create(ctx context.Context, f *models.Function) (int64, error) {
-	var id int64
-	var assigned interface{}
-	if f.AssignedDate != nil {
-		assigned = f.AssignedDate.Format("2006-01-02")
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return 0, err
 	}
-	err := r.db.QueryRowContext(ctx, `
-		INSERT INTO dbo.functions (inquiry_id, customer_name, phone_number, address, function_type, function_date,
-			total_amount, advance_paid, assigned_editor, assigned_date, album_status, video_status, delivery_status, overall_status,
-			customer_booking_notes, services_json, complimentary_json, admin_notes, drive_links)
-		OUTPUT INSERTED.id
-		VALUES (@p1,@p2,@p3,@p4,@p5,@p6,@p7,@p8,@p9,@p10,@p11,@p12,@p13,@p14,@p15,@p16,@p17,@p18,@p19)`,
-		f.InquiryID, f.CustomerName, f.PhoneNumber, f.Address, f.FunctionType, f.FunctionDate.Format("2006-01-02"),
-		f.TotalAmount, f.AdvancePaid, f.AssignedEditor, assigned,
-		f.AlbumStatus, f.VideoStatus, f.DeliveryStatus, f.OverallStatus,
-		f.CustomerBookingNotes, servicesJSON(f.Services), servicesJSON(f.Complimentary),
-		f.AdminNotes, f.DriveLinks,
-	).Scan(&id)
-	return id, err
+	var maxID int64
+	for _, it := range list {
+		if it.ID > maxID {
+			maxID = it.ID
+		}
+	}
+
+	now := time.Now().UTC()
+	n := *f
+	n.ID = maxID + 1
+	n.CreatedAt = now
+	n.UpdatedAt = now
+	normalizeFunction(&n)
+	if len(n.EventDates) == 0 {
+		n.EventDates = []models.FunctionEventDate{{EventDate: n.FunctionDate, SortOrder: 0}}
+	}
+	n.FunctionDate = primaryEventDate(n)
+	recomputeBalance(&n)
+
+	list = append(list, n)
+	if err := r.save(list); err != nil {
+		return 0, err
+	}
+	return n.ID, nil
 }
 
 func (r *FunctionRepo) Update(ctx context.Context, f *models.Function) error {
-	var assigned interface{}
-	if f.AssignedDate != nil {
-		assigned = f.AssignedDate.Format("2006-01-02")
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return err
 	}
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE dbo.functions SET customer_name=@p1, phone_number=@p2, address=@p3, function_type=@p4, function_date=@p5,
-			total_amount=@p6, advance_paid=@p7, assigned_editor=@p8, assigned_date=@p9,
-			album_status=@p10, video_status=@p11, delivery_status=@p12, overall_status=@p13,
-			customer_booking_notes=@p14, services_json=@p15, complimentary_json=@p16,
-			admin_notes=@p17, drive_links=@p18, updated_at=SYSUTCDATETIME() WHERE id=@p19`,
-		f.CustomerName, f.PhoneNumber, f.Address, f.FunctionType, f.FunctionDate.Format("2006-01-02"),
-		f.TotalAmount, f.AdvancePaid, f.AssignedEditor, assigned,
-		f.AlbumStatus, f.VideoStatus, f.DeliveryStatus, f.OverallStatus,
-		f.CustomerBookingNotes, servicesJSON(f.Services), servicesJSON(f.Complimentary),
-		f.AdminNotes, f.DriveLinks, f.ID)
-	return err
+
+	now := time.Now().UTC()
+	for i := range list {
+		if list[i].ID == f.ID {
+			createdAt := list[i].CreatedAt
+			existingDates := list[i].EventDates
+
+			n := *f
+			n.CreatedAt = createdAt
+			n.UpdatedAt = now
+			if n.EventDates == nil {
+				n.EventDates = existingDates
+			}
+			normalizeFunction(&n)
+			n.FunctionDate = primaryEventDate(n)
+			recomputeBalance(&n)
+
+			list[i] = n
+			return r.save(list)
+		}
+	}
+	return ErrNotFound
 }
 
 func (r *FunctionRepo) Delete(ctx context.Context, id int64) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM dbo.functions WHERE id = @p1`, id)
-	return err
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return err
+	}
+	out := list[:0]
+	found := false
+	for _, it := range list {
+		if it.ID == id {
+			found = true
+			continue
+		}
+		out = append(out, it)
+	}
+	if !found {
+		return ErrNotFound
+	}
+	return r.save(out)
 }
 
 func (r *FunctionRepo) ListEventDates(ctx context.Context, functionID int64) ([]models.FunctionEventDate, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, function_id, event_date, day_label, sort_order
-		FROM dbo.function_event_dates WHERE function_id = @p1 ORDER BY sort_order, event_date`, functionID)
+	f, err := r.GetByID(ctx, functionID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var list []models.FunctionEventDate
-	for rows.Next() {
-		var d models.FunctionEventDate
-		var label sql.NullString
-		if err := rows.Scan(&d.ID, &d.FunctionID, &d.EventDate, &label, &d.SortOrder); err != nil {
-			return nil, err
+	out := make([]models.FunctionEventDate, len(f.EventDates))
+	copy(out, f.EventDates)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].SortOrder != out[j].SortOrder {
+			return out[i].SortOrder < out[j].SortOrder
 		}
-		if label.Valid {
-			d.DayLabel = &label.String
-		}
-		list = append(list, d)
-	}
-	if list == nil {
-		list = []models.FunctionEventDate{}
-	}
-	return list, rows.Err()
+		return out[i].EventDate.Before(out[j].EventDate)
+	})
+	return out, nil
 }
 
 func (r *FunctionRepo) ReplaceEventDates(ctx context.Context, functionID int64, dates []models.FunctionEventDate) error {
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM dbo.function_event_dates WHERE function_id = @p1`, functionID); err != nil {
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
 		return err
 	}
-	for i, d := range dates {
-		label := d.DayLabel
-		_, err := r.db.ExecContext(ctx, `
-			INSERT INTO dbo.function_event_dates (function_id, event_date, day_label, sort_order)
-			VALUES (@p1, @p2, @p3, @p4)`,
-			functionID, d.EventDate.Format("2006-01-02"), label, i)
-		if err != nil {
-			return err
+
+	now := time.Now().UTC()
+	for i := range list {
+		if list[i].ID == functionID {
+			next := make([]models.FunctionEventDate, 0, len(dates))
+			for j := range dates {
+				d := dates[j]
+				d.SortOrder = j
+				next = append(next, d)
+			}
+			list[i].EventDates = next
+			normalizeFunction(&list[i])
+			list[i].FunctionDate = primaryEventDate(list[i])
+			list[i].UpdatedAt = now
+			return r.save(list)
 		}
 	}
-	return nil
+	return ErrNotFound
 }
 
 func ParseEventDateStrings(dateStrs []string) ([]models.FunctionEventDate, time.Time, error) {
 	if len(dateStrs) == 0 {
-		return nil, time.Time{}, sql.ErrNoRows
+		return nil, time.Time{}, errors.New("no dates")
 	}
 	var dates []models.FunctionEventDate
 	for i, s := range dateStrs {
@@ -258,7 +272,7 @@ func ParseEventDateStrings(dateStrs []string) ([]models.FunctionEventDate, time.
 		dates = append(dates, models.FunctionEventDate{EventDate: t, SortOrder: i})
 	}
 	if len(dates) == 0 {
-		return nil, time.Time{}, sql.ErrNoRows
+		return nil, time.Time{}, errors.New("no dates")
 	}
 	sort.Slice(dates, func(i, j int) bool {
 		return dates[i].EventDate.Before(dates[j].EventDate)
@@ -274,31 +288,124 @@ func trimDate(s string) string {
 }
 
 func (r *FunctionRepo) CountPendingAlbums(ctx context.Context) (int, error) {
-	var n int
-	err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM dbo.functions
-		WHERE album_status NOT IN ('printed','delivered') AND overall_status NOT IN ('delivered')`).Scan(&n)
-	return n, err
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, f := range list {
+		if f.OverallStatus == "delivered" {
+			continue
+		}
+		if f.AlbumStatus == "printed" || f.AlbumStatus == "delivered" {
+			continue
+		}
+		n++
+	}
+	return n, nil
 }
 
 func (r *FunctionRepo) CountPendingVideos(ctx context.Context) (int, error) {
-	var n int
-	err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM dbo.functions
-		WHERE video_status NOT IN ('completed','delivered') AND overall_status NOT IN ('delivered')`).Scan(&n)
-	return n, err
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, f := range list {
+		if f.OverallStatus == "delivered" {
+			continue
+		}
+		if f.VideoStatus == "completed" || f.VideoStatus == "delivered" {
+			continue
+		}
+		n++
+	}
+	return n, nil
 }
 
 func (r *FunctionRepo) CountPendingDeliveries(ctx context.Context) (int, error) {
-	var n int
-	err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM dbo.functions WHERE overall_status IN ('album_ready','editing','completed') AND delivery_status != 'delivered'`).Scan(&n)
-	return n, err
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, f := range list {
+		if f.DeliveryStatus == "delivered" {
+			continue
+		}
+		if f.OverallStatus == "album_ready" || f.OverallStatus == "editing" || f.OverallStatus == "completed" {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (r *FunctionRepo) CountUpcoming(ctx context.Context) (int, error) {
-	var n int
-	err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM dbo.functions WHERE overall_status = 'upcoming' AND function_date >= CAST(GETUTCDATE() AS DATE)`).Scan(&n)
-	return n, err
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	list, err := r.load()
+	if err != nil {
+		return 0, err
+	}
+	today := todayUTC()
+	n := 0
+	for _, f := range list {
+		if f.OverallStatus != "upcoming" {
+			continue
+		}
+		if f.FunctionDate.Before(today) {
+			continue
+		}
+		n++
+	}
+	return n, nil
+}
+
+func todayUTC() time.Time {
+	now := time.Now().UTC()
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func normalizeFunction(f *models.Function) {
+	if f.Services == nil {
+		f.Services = []string{}
+	}
+	if f.Complimentary == nil {
+		f.Complimentary = []string{}
+	}
+	if f.EventDates == nil {
+		f.EventDates = []models.FunctionEventDate{}
+	}
+	recomputeBalance(f)
+}
+
+func recomputeBalance(f *models.Function) {
+	f.BalanceAmount = f.TotalAmount - f.AdvancePaid
+}
+
+func primaryEventDate(f models.Function) time.Time {
+	if len(f.EventDates) == 0 {
+		return f.FunctionDate
+	}
+	min := f.EventDates[0].EventDate
+	for i := 1; i < len(f.EventDates); i++ {
+		if f.EventDates[i].EventDate.Before(min) {
+			min = f.EventDates[i].EventDate
+		}
+	}
+	return min
 }
